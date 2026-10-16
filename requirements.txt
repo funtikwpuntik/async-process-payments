@@ -1,0 +1,9 @@
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30
+pydantic>=2.9,<3
+pydantic-settings>=2.5,<3
+sqlalchemy[asyncio]>=2.0.36,<2.1
+asyncpg>=0.30
+alembic>=1.14,<2
+faststream[rabbit,cli]>=0.5.30,<0.6
+httpx2>2.5.0
