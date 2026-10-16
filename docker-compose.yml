@@ -1,0 +1,79 @@
+x-app-env: &app-env
+  API_KEY: ${API_KEY:-secret-api-key}
+  DATABASE_URL: postgresql+asyncpg://payments:payments@postgres:5432/payments
+  RABBIT_URL: amqp://guest:guest@rabbitmq:5672/
+  MAX_ATTEMPTS: ${MAX_ATTEMPTS:-3}
+  RETRY_BASE_DELAY_MS: ${RETRY_BASE_DELAY_MS:-1000}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: payments
+      POSTGRES_PASSWORD: payments
+      POSTGRES_DB: payments
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U payments -d payments"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    ports:
+      - "5672:5672"
+      - "15672:15672"   # management UI: http://localhost:15672 (guest/guest)
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+
+  migrations:
+    build: .
+    command: ["alembic", "upgrade", "head"]
+    environment: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build: .
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment: *app-env
+    ports:
+      - "8000:8000"
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  consumer:
+    build: .
+    command: ["faststream", "run", "app.consumer:app"]
+    environment: *app-env
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Тестовый получатель webhook'ов (необязателен для сервиса, удобен для проверки).
+  # FAIL_RATE=0.5 — половина запросов получит 500, видно retry и DLQ.
+  webhook-receiver:
+    build: .
+    command: ["uvicorn", "app.tools.webhook_receiver:app", "--host", "0.0.0.0", "--port", "9000"]
+    environment:
+      FAIL_RATE: ${WEBHOOK_FAIL_RATE:-0}
+    ports:
+      - "9000:9000"
+
+volumes:
+  pg_data:
